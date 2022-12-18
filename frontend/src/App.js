@@ -1,18 +1,20 @@
 import "bootstrap/dist/css/bootstrap.min.css";
-import { useEffect, useState } from 'react';
+import "react-toastify/dist/ReactToastify.css";
+import './App.css';
+
+import {  useState, useEffect } from 'react';
+import { ethers } from "ethers";
+import {ToastContainer, toast} from "react-toastify";
+
 import WRHeader from 'wrcomponents/dist/WRHeader';
 import WRFooter from 'wrcomponents/dist/WRFooter';
 import WRInfo from 'wrcomponents/dist/WRInfo';
 import WRContent from 'wrcomponents/dist/WRContent';
 import WRTools from 'wrcomponents/dist/WRTools';
-import { ethers } from "ethers";
-import './App.css';
-import {ToastContainer, toast} from "react-toastify";
-import "react-toastify/dist/ReactToastify.css";
-import { _toEscapedUtf8String } from "ethers/lib/utils";
 
 function App() {
 
+  const [userAccount, setUserAccount]= useState('');
   const [nextBallotId, setNextBallotId]= useState('');
   const [ballots, setBallots] =useState([])
   const [descriptionBallot, setDescriptionBallot] = useState('');
@@ -21,7 +23,7 @@ function App() {
   const [ballotIdResult, setBallotIdResult] = useState('');
   
 
-  const addressContract = '0xebe48C6fAed44FEADE1122682Bb0C362a0fEab48';
+  const contractAddress = '0x34a5DD0bE685F1f0b9059f0fC36e0e316763421c';
 
   const abi = [
     {
@@ -293,13 +295,21 @@ function App() {
     
   }, [])
 
-  function getProvider(){
-    const provider = new ethers.providers.Web3Provider(window.ethereum);
-    if (contractDeployed == null){
-      contractDeployed = new ethers.Contract(addressContract, abi, provider)
-    }
-    if (contractDeployedSigner == null){
-      contractDeployedSigner = new ethers.Contract(addressContract, abi, provider.getSigner());
+  async function getProvider(connect = false){
+    try {
+      const provider = new ethers.providers.Web3Provider(window.ethereum);
+      if (contractDeployed == null){
+        contractDeployed = new ethers.Contract(contractAddress, abi, provider)
+      }
+      if (contractDeployedSigner == null){
+        contractDeployedSigner = new ethers.Contract(contractAddress, abi, provider.getSigner());
+      }
+      if (connect && userAccount==''){
+        let userAcc = await provider.send('eth_requestAccounts', []);
+        setUserAccount(userAcc[0]);
+      }  
+    } catch (error) {
+      console.log(error.reason)
     }
   }
 
@@ -308,48 +318,51 @@ function App() {
   }
 
   async function getData() {
-    getProvider();
-    let nextBalId=  await contractDeployed.nextBallotId();
-    setNextBallotId(nextBalId)
-
-    let arrayBallots = [];
-    for (let i = 0 ; i < nextBalId; i ++){
-      let newBallot = await contractDeployed.getBallot(i);
-      arrayBallots.push(newBallot);
+    try {
+      getProvider();
+      let nextBalId=  await contractDeployed.nextBallotId();
+      setNextBallotId(nextBalId)
+  
+      let arrayBallots = [];
+      for (let i = 0 ; i < nextBalId; i ++){
+        let newBallot = await contractDeployed.getBallot(i);
+        arrayBallots.push(newBallot);
+      }
+      setBallots(arrayBallots);  
+    } catch (error) {
+      console.log(error)
     }
-    setBallots(arrayBallots);
-    console.log(arrayBallots);
+    
   }
 
   async function handleCreateBallot(){
-    getProvider();
+    getProvider(true);
     try {
       const resp  = await contractDeployedSigner.createBallot(descriptionBallot, ["Yes", "No"], Date.now() + ( daysBallot * 86400 + 1000 ));  
-     // const resp  = await contractDeployedSigner.createBallot(descriptionBallot, ["Yes", "No"], 0);  
       console.log(resp);
       toastMessage("Ballot created.")
     } catch (error) {
-      toastMessage(error.data.message);
+      toastMessage(error.reason);
     }
   }
 
   async function handleVote(ballotId, choice){
-    getProvider();
+    getProvider(true);
     try {
       const resp  = await contractDeployedSigner.vote((ballotId).toString(), choice);  
       toastMessage("Voted.")
     } catch (error) {
-      toastMessage(error.data.message);
+      toastMessage(error.reason);
     }
   }
 
   async function handleAddVoter(voterAddr){
-    getProvider();
+    getProvider(true);
     try {
       const resp  = await contractDeployedSigner.addVoter(voterAddr);  
       toastMessage("Voter Added.")
     } catch (error) {
-      toastMessage(error.data.message);
+      toastMessage(error.reason);
     }
   }
 
@@ -360,14 +373,14 @@ function App() {
   }
 
   async function handleGetResult(){
-    getProvider();
+    getProvider(true);
     try {
       const resp  = await contractDeployed.results(ballotIdResult);  
       console.log(resp);
       toastMessage(`Yes votes: ${(resp[0].votes).toString()}`)
       toastMessage(`No votes: ${(resp[1].votes).toString()}`)
     } catch (error) {
-      toastMessage(error.error.data.message);
+      toastMessage(error.reason);
     }
   }
 
@@ -380,29 +393,29 @@ function App() {
  
         {nextBallotId == '' ?
           <>
-            <button onClick={getData}>Load data from blockchain</button>
+            <button className="btn btn-primary col-3" onClick={getData}>Load data from blockchain</button>
           </>
           : 
           <>
           <h2>Voting Info</h2>
-          <h5>Ballots: {(nextBallotId).toString()}</h5>
+          <label>Ballots: {(nextBallotId).toString()}</label>
 
           <hr/>
           <h2>Add voter (only admin)</h2>
-          <input type="text" placeholder="Voter address" onChange={(e) => setVoterAddress(e.target.value)} value={voterAddress}/>
-          <button onClick={() => handleAddVoter(voterAddress)}>Add voter</button>
+          <input type="text" className="mb-1  col-3" placeholder="Voter address" onChange={(e) => setVoterAddress(e.target.value)} value={voterAddress}/>
+          <button className="btn btn-primary col-3" onClick={() => handleAddVoter(voterAddress)}>Add voter</button>
 
           <hr/>
           <h2>Create ballot (only admin)</h2>
-          <input type="text" placeholder="Ballot" onChange={(e) => setDescriptionBallot(e.target.value)} value={descriptionBallot}/>
-          <input type="text" placeholder="Time (in days)" onChange={(e) => setDaysBallot(e.target.value)} value={daysBallot}/>
-          <button onClick={handleCreateBallot}>Create</button>
+          <input type="text" className="mb-1  col-3" placeholder="Ballot" onChange={(e) => setDescriptionBallot(e.target.value)} value={descriptionBallot}/>
+          <input type="number" className="mb-1 col-3" placeholder="Time (in days)" onChange={(e) => setDaysBallot(e.target.value)} value={daysBallot}/>
+          <button className="btn btn-primary col-3" onClick={handleCreateBallot}>Create</button>
 
           <hr/>
           <h2>Ballots</h2>
 
           { ballots.length > 0 ?
-            <table>
+            <table className="table">
               <thead>
                 <tr>
                   <td style={{width: 100}}>Id</td>
@@ -423,8 +436,8 @@ function App() {
                     <td>{(item.choices[0].votes).toString()}</td>
                     <td>{(item.choices[1].votes).toString()}</td>
                     <td>{formatDate((item.end))}</td>
-                    <td><button onClick={()=>handleVote(item.id, 0)}>Vote Yes</button></td>
-                    <td><button onClick={()=>handleVote(item.id, 1)}>Vote No</button></td>
+                    <td><button className="btn btn-primary" onClick={()=>handleVote(item.id, 0)}>Vote Yes</button></td>
+                    <td><button className="btn btn-primary" onClick={()=>handleVote(item.id, 1)}>Vote No</button></td>
                   </tr>
                 )}                
               </tbody>
@@ -432,8 +445,8 @@ function App() {
           }
           <hr/>
           <h2>Results</h2>
-          <input type="text" placeholder="Ballot Id" onChange={(e) => setBallotIdResult(e.target.value)} value={ballotIdResult}/>
-          <button onClick={handleGetResult}>Get Result</button>
+          <input type="number" className="col-3 mb-1" placeholder="Ballot Id" onChange={(e) => setBallotIdResult(e.target.value)} value={ballotIdResult}/>
+          <button className="btn btn-primary col-3" onClick={handleGetResult}>Get Result</button>
           </>
         }
       </WRContent>

@@ -474,7 +474,7 @@ function App() {
       <WRInfo chain="Goerli" testnet={true} />
       <WRContent>
  
-        <h1>MULTISIGN WALLET</h1>
+        <h1>VOTING</h1>
         {loading && 
           <h1>Loading....</h1>
         }

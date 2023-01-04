@@ -7,14 +7,23 @@ import { ethers } from "ethers";
 import {ToastContainer, toast} from "react-toastify";
 
 import WRHeader from 'wrcomponents/dist/WRHeader';
-import WRFooter from 'wrcomponents/dist/WRFooter';
+import WRFooter, { async } from 'wrcomponents/dist/WRFooter';
 import WRInfo from 'wrcomponents/dist/WRInfo';
 import WRContent from 'wrcomponents/dist/WRContent';
 import WRTools from 'wrcomponents/dist/WRTools';
+import Button from "react-bootstrap/Button";
+
+import { format6FirstsAnd6LastsChar, formatDate } from "./utils";
+import meta from "./assets/metamask.png";
 
 function App() {
 
-  const [userAccount, setUserAccount]= useState('');
+  const [loading, setLoading] = useState(false);
+  const [user, setUser] = useState({});
+  const [provider, setProvider] = useState();
+  const [contract, setContract] = useState();
+  const [signer, setSigner] = useState();
+  
   const [nextBallotId, setNextBallotId]= useState('');
   const [ballots, setBallots] =useState([])
   const [descriptionBallot, setDescriptionBallot] = useState('');
@@ -286,30 +295,95 @@ function App() {
     }
   ];
   
-  let contractDeployed = null;
-  let contractDeployedSigner = null;
-  
-  useEffect( () => {
 
-    getData()
+  async function handleConnectWallet (){
+    try {
+      setLoading(true)
+      let userAcc = await provider.send('eth_requestAccounts', []);
+      setUser({account: userAcc[0], connected: true});
+
+      const contrSig = new ethers.Contract(contractAddress, abi, provider.getSigner())
+      setSigner( contrSig)
+
+    } catch (error) {
+      if (error.message == 'provider is undefined'){
+        toastMessage('No provider detected.')
+      } else if(error.code === -32002){
+        toastMessage('Check your metamask')
+      }
+    } finally{
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    
+    async function getData() {
+      try {
+        const {ethereum} = window;
+        if (!ethereum){
+          toastMessage('Metamask not detected');
+          return
+        }
+  
+        const prov =  new ethers.providers.Web3Provider(window.ethereum);
+        setProvider(prov);
+
+        const contr = new ethers.Contract(contractAddress, abi, prov);
+        setContract(contr);
+        
+        if (! await isGoerliTestnet()){
+          toastMessage('Change to goerli testnet.')
+          return;
+        }
+
+        //contract data
+        let nextBalId=  await contr.nextBallotId();
+        setNextBallotId(nextBalId)
+    
+        let arrayBallots = [];
+        for (let i = 0 ; i < nextBalId; i ++){
+          let newBallot = await contr.getBallot(i);
+          arrayBallots.push(newBallot);
+        }
+        setBallots(arrayBallots);  
+        
+      } catch (error) {
+        toastMessage(error.reason)        
+      }
+      
+    }
+
+    getData()  
     
   }, [])
+  
+  function isConnected(){
+    if (!user.connected){
+      toastMessage('You are not connected!')
+      return false;
+    }
+    
+    return true;
+  }
 
-  async function getProvider(connect = false){
+  async function isGoerliTestnet(){
+    const goerliChainId = "0x5";
+    const respChain = await getChain();
+    return goerliChainId == respChain;
+  }
+
+  async function getChain() {
+    const currentChainId = await  window.ethereum.request({method: 'eth_chainId'})
+    return currentChainId;
+  }
+
+  async function handleDisconnect(){
     try {
-      const provider = new ethers.providers.Web3Provider(window.ethereum);
-      if (contractDeployed == null){
-        contractDeployed = new ethers.Contract(contractAddress, abi, provider)
-      }
-      if (contractDeployedSigner == null){
-        contractDeployedSigner = new ethers.Contract(contractAddress, abi, provider.getSigner());
-      }
-      if (connect && userAccount==''){
-        let userAcc = await provider.send('eth_requestAccounts', []);
-        setUserAccount(userAcc[0]);
-      }  
+      setUser({});
+      setSigner(null);
     } catch (error) {
-      console.log(error.reason)
+      toastMessage(error.reason)
     }
   }
 
@@ -317,66 +391,75 @@ function App() {
     toast.info(text)  ;
   }
 
-  async function getData() {
-    try {
-      getProvider();
-      let nextBalId=  await contractDeployed.nextBallotId();
-      setNextBallotId(nextBalId)
-  
-      let arrayBallots = [];
-      for (let i = 0 ; i < nextBalId; i ++){
-        let newBallot = await contractDeployed.getBallot(i);
-        arrayBallots.push(newBallot);
-      }
-      setBallots(arrayBallots);  
-    } catch (error) {
-      console.log(error)
-    }
-    
-  }
 
   async function handleCreateBallot(){
-    getProvider(true);
     try {
-      const resp  = await contractDeployedSigner.createBallot(descriptionBallot, ["Yes", "No"], Date.now() + ( daysBallot * 86400 + 1000 ));  
-      console.log(resp);
+      if (!isConnected()) {
+        return;
+      }
+      if (! await isGoerliTestnet()){
+        toastMessage('Change to goerli testnet.')
+        return;
+      }
+      setLoading(true);
+      const resp  = await signer.createBallot(descriptionBallot, ["Yes", "No"], Date.now() + ( daysBallot * 86400 + 1000 ));  
+      toastMessage("Please wait.")
+      await resp.wait();
       toastMessage("Ballot created.")
     } catch (error) {
-      toastMessage(error.reason);
+      toastMessage(error.reason)      
+    } finally{
+      setLoading(false);
     }
   }
 
   async function handleVote(ballotId, choice){
-    getProvider(true);
     try {
-      const resp  = await contractDeployedSigner.vote((ballotId).toString(), choice);  
+      if (!isConnected()) {
+        return;
+      }
+      if (! await isGoerliTestnet()){
+        toastMessage('Change to goerli testnet.')
+        return;
+      }
+      setLoading(true);
+      const resp  = await signer.vote((ballotId).toString(), choice);  
+      toastMessage("Please wait.")
+      await resp.wait();
       toastMessage("Voted.")
     } catch (error) {
-      toastMessage(error.reason);
+      toastMessage(error.reason)      
+    } finally{
+      setLoading(false);
     }
+  
   }
 
   async function handleAddVoter(voterAddr){
-    getProvider(true);
+    
     try {
-      const resp  = await contractDeployedSigner.addVoter(voterAddr);  
+      if (!isConnected()) {
+        return;
+      }
+      if (! await isGoerliTestnet()){
+        toastMessage('Change to goerli testnet.')
+        return;
+      }
+      setLoading(true);
+      const resp  = await signer.addVoter(voterAddr);  
+      toastMessage("Please wait.")
+      await resp.wait();
       toastMessage("Voter Added.")
     } catch (error) {
-      toastMessage(error.reason);
+      toastMessage(error.reason)      
+    } finally{
+      setLoading(false);
     }
   }
 
-  function formatDate(dateTimestamp){
-    let date = new Date(parseInt(dateTimestamp));
-    let dateFormatted = date.getDate() + "/" + (date.getMonth() + 1) + "/" + date.getFullYear() + "  " + date.getHours() + ":" + date.getMinutes();
-    return dateFormatted;
-  }
-
   async function handleGetResult(){
-    getProvider(true);
     try {
-      const resp  = await contractDeployed.results(ballotIdResult);  
-      console.log(resp);
+      const resp  = await contract.results(ballotIdResult);  
       toastMessage(`Yes votes: ${(resp[0].votes).toString()}`)
       toastMessage(`No votes: ${(resp[1].votes).toString()}`)
     } catch (error) {
@@ -388,28 +471,39 @@ function App() {
     <div className="App">
       <ToastContainer position="top-center" autoClose={5000}/>
       <WRHeader title="Dapp Voting" image={true} />
-      <WRInfo chain="Goerli testnet" />
+      <WRInfo chain="Goerli" testnet={true} />
       <WRContent>
  
-        {nextBallotId == '' ?
-          <>
-            <button className="btn btn-primary col-3" onClick={getData}>Load data from blockchain</button>
+        <h1>MULTISIGN WALLET</h1>
+        {loading && 
+          <h1>Loading....</h1>
+        }
+        { !user.connected ?<>
+            <Button className="commands" variant="btn btn-primary" onClick={handleConnectWallet}>
+              <img src={meta} alt="metamask" width="30px" height="30px"/>Connect to Metamask
+            </Button></>
+          : <>
+            <label>Welcome {format6FirstsAnd6LastsChar(user.account)}</label>
+            <button className="btn btn-primary commands" onClick={handleDisconnect}>Disconnect</button>
           </>
-          : 
+        }
+        <hr/> 
+
+        {nextBallotId !== '' &&
           <>
           <h2>Voting Info</h2>
           <label>Ballots: {(nextBallotId).toString()}</label>
 
           <hr/>
           <h2>Add voter (only admin)</h2>
-          <input type="text" className="mb-1  col-3" placeholder="Voter address" onChange={(e) => setVoterAddress(e.target.value)} value={voterAddress}/>
-          <button className="btn btn-primary col-3" onClick={() => handleAddVoter(voterAddress)}>Add voter</button>
+          <input type="text" className="commands" placeholder="Voter address" onChange={(e) => setVoterAddress(e.target.value)} value={voterAddress}/>
+          <button className="btn btn-primary commands" onClick={() => handleAddVoter(voterAddress)}>Add voter</button>
 
           <hr/>
           <h2>Create ballot (only admin)</h2>
-          <input type="text" className="mb-1  col-3" placeholder="Ballot" onChange={(e) => setDescriptionBallot(e.target.value)} value={descriptionBallot}/>
-          <input type="number" className="mb-1 col-3" placeholder="Time (in days)" onChange={(e) => setDaysBallot(e.target.value)} value={daysBallot}/>
-          <button className="btn btn-primary col-3" onClick={handleCreateBallot}>Create</button>
+          <input type="text" className="commands" placeholder="Ballot" onChange={(e) => setDescriptionBallot(e.target.value)} value={descriptionBallot}/>
+          <input type="number" className="commands" placeholder="Time (in days)" onChange={(e) => setDaysBallot(e.target.value)} value={daysBallot}/>
+          <button className="btn btn-primary commands" onClick={handleCreateBallot}>Create</button>
 
           <hr/>
           <h2>Ballots</h2>
@@ -445,8 +539,8 @@ function App() {
           }
           <hr/>
           <h2>Results</h2>
-          <input type="number" className="col-3 mb-1" placeholder="Ballot Id" onChange={(e) => setBallotIdResult(e.target.value)} value={ballotIdResult}/>
-          <button className="btn btn-primary col-3" onClick={handleGetResult}>Get Result</button>
+          <input type="number" className="commands" placeholder="Ballot Id" onChange={(e) => setBallotIdResult(e.target.value)} value={ballotIdResult}/>
+          <button className="btn btn-primary commands" onClick={handleGetResult}>Get Result</button>
           </>
         }
       </WRContent>
